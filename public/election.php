@@ -3,6 +3,8 @@ require_once '../includes/config.php';
 require_once '../includes/db.php';
 require_once '../includes/functions.php';
 
+
+
 // Verifica se o usuário está logado
 if (!isLoggedIn()) {
     header('Location: ' . BASE_PATH . '/login.php');

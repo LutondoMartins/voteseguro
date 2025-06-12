@@ -3,37 +3,82 @@ require_once '../includes/config.php';
 require_once '../includes/db.php';
 require_once '../includes/functions.php';
 
+// Verificar se já está logado
+if (isLoggedIn()) {
+    header('Location: ' . BASE_PATH . '/index.php');
+    exit;
+}
+
 // Inicializa variáveis
 $error = '';
 $username = '';
 
-// Processa o formulário de login
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $username = trim($_POST['username'] ?? '');
-    $password = trim($_POST['password'] ?? '');
+// Inicializar contador de tentativas de login
+if (!isset($_SESSION['login_attempts'])) {
+    $_SESSION['login_attempts'] = 0;
+    $_SESSION['lockout_time'] = 0;
+}
 
-    // Validação básica no servidor
-    if (empty($username) || empty($password)) {
-        $error = 'Por favor, preencha todos os campos obrigatórios.';
+// Verificar bloqueio por tentativas
+if ($_SESSION['login_attempts'] >= 5 && time() < $_SESSION['lockout_time'] + 300) {
+    $error = 'Conta bloqueada temporariamente. Tente novamente em ' . (300 - (time() - $_SESSION['lockout_time'])) . ' segundos.';
+} elseif ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    // Validar token CSRF
+    $csrf_token = $_POST['csrf_token'] ?? '';
+    if (!validateCsrfToken($csrf_token)) {
+        $error = 'Erro de validação de formulário. Tente novamente.';
+        error_log('Tentativa de login com CSRF token inválido: ' . $username);
     } else {
-        $conn = getDBConnection();
-        $stmt = $conn->prepare("SELECT id, username, password, role FROM users WHERE username = ?");
-        $stmt->bind_param("s", $username);
-        $stmt->execute();
-        $result = $stmt->get_result();
-        $user = $result->fetch_assoc();
+        $username = sanitizeInput(trim($_POST['username'] ?? ''), 'string');
+        $password = trim($_POST['password'] ?? '');
 
-        if ($user && password_verify($password, $user['password'])) {
-            // Credenciais válidas, inicia sessão
-            $_SESSION['user_id'] = $user['id'];
-            $_SESSION['role'] = $user['role'];
-            header('Location: index.php');
-            exit;
+        // Validação no servidor
+        if (empty($username) || empty($password)) {
+            $error = 'Por favor, preencha todos os campos obrigatórios.';
+        } elseif (strlen($username) < 3 || strlen($password) < 6) {
+            $error = 'Credenciais inválidas.';
         } else {
-            $error = 'Nome de utilizador ou palavra-passe incorretos.';
+            $conn = getDBConnection();
+            $stmt = $conn->prepare("SELECT id, username, password, role FROM users WHERE username = ?");
+            if (!$stmt) {
+                error_log("Erro ao preparar consulta em login: " . $conn->error);
+                $error = 'Erro interno do servidor.';
+            } else {
+                $stmt->bind_param("s", $username);
+                if ($stmt->execute()) {
+                    $result = $stmt->get_result();
+                    $user = $result->fetch_assoc();
+
+                    if ($user && password_verify($password, $user['password'])) {
+                        // Sucesso: resetar tentativas e iniciar sessão
+                        $_SESSION['login_attempts'] = 0;
+                        $_SESSION['lockout_time'] = 0;
+                        session_regenerate_id(true);
+                        $_SESSION['user_id'] = $user['id'];
+                        $_SESSION['role'] = $user['role'];
+                        $_SESSION['last_activity'] = time();
+                        error_log("Login bem-sucedido: " . $username);
+                        header('Location: ' . BASE_PATH . '/index.php');
+                        exit;
+                    } else {
+                        // Falha: incrementar tentativas
+                        $_SESSION['login_attempts']++;
+                        if ($_SESSION['login_attempts'] >= 5) {
+                            $_SESSION['lockout_time'] = time();
+                            $error = 'Conta bloqueada temporariamente. Tente novamente em 5 minutos.';
+                        } else {
+                            $error = 'Credenciais inválidas.';
+                        }
+                        error_log("Tentativa de login falhou: " . $username);
+                    }
+                } else {
+                    error_log("Erro ao executar consulta em login: " . $stmt->error);
+                    $error = 'Erro interno do servidor.';
+                }
+                $stmt->close();
+            }
+            $conn->close();
         }
-        $stmt->close();
-        $conn->close();
     }
 }
 ?>
@@ -43,6 +88,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
     <title>Iniciar Sessão - VoteSeguro</title>
     
     <!-- Google Fonts - Inter -->
@@ -57,6 +103,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         body {
             font-family: 'Inter', sans-serif;
         }
+        .focused input {
+            box-shadow: 0 0 0 2px rgba(30, 64, 175, 0.2);
+        }
     </style>
 </head>
 <body class="bg-gray-100 min-h-screen flex flex-col">
@@ -65,31 +114,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <div class="w-full max-w-md space-y-8">
             <!-- Logo -->
             <div class="text-center mb-8">
-                <div class="inline-flex items-center justify-center w-16 h-16 mb-6 bg-blue-800 rounded-2xl">
-                    <svg class="w-8 h-8 text-white" fill="currentColor" viewBox="0 0 20 20">
-                        <path fill-rule="evenodd" d="M6.267 3.455a3.066 3.066 0 001.745-.723 3.066 3.066 0 013.976 0 3.066 3.066 0 001.745.723 3.066 3.066 0 012.812 2.812c.051.643.304 1.254.723 1.745a3.066 3.066 0 010 3.976 3.066 3.066 0 00-.723 1.745 3.066 3.066 0 01-2.812 2.812 3.066 3.066 0 00-1.745.723 3.066 3.066 0 01-3.976 0 3.066 3.066 0 00-1.745-.723 3.066 3.066 0 01-2.812-2.812 3.066 3.066 0 00-.723-1.745 3.066 3.066 0 010-3.976 3.066 3.066 0 00.723-1.745 3.066 3.066 0 012.812-2.812zm7.44 5.252a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"></path>
-                    </svg>
+                <div class="inline-flex items-center justify-center w-16 h-16 mb-6">
+                            <div class="w-16 h-16 bg-gradient-to-br from-blue-600 to-emerald-500 rounded-xl flex items-center justify-center shadow-lg group-hover:shadow-xl transition-all duration-300">
+                                <svg class="w-10 h-10 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                                </svg>
+                            </div>
                 </div>
                 <h1 class="text-3xl font-bold text-blue-800 mb-2">VoteSeguro</h1>
-                <p class="text-gray-600">Plataforma segura de votação digital</p>
+                <p class="text-sm text-gray-600">Plataforma segura de votação digital</p>
             </div>
 
             <!-- Login Card -->
             <div class="bg-white/80 backdrop-blur-sm rounded-2xl shadow-xl border border-white/20 p-8">
                 <div class="text-center mb-8">
-                    <h2 class="text-2xl sm:text-xl font-bold text-gray-900 mb-2">Bem-vindo de volta</h2>
+                    <h2 class="text-2xl font-semibold text-gray-900 mb-2">Bem-vindo</h2>
                     <p class="text-sm text-gray-600">Entre na sua conta para continuar</p>
                 </div>
 
                 <!-- Error Message -->
                 <?php if (!empty($error)): ?>
-                <div class="mb-6 p-4 bg-red-100 border border-red-200 text-red-800 rounded-xl text-sm">
-                    <?php echo htmlspecialchars($error); ?>
+                <div class="mb-6 p-4 border border-red-200 bg-red-100 rounded-xl text-sm text-red-600">
+                    <?php echo sanitize($error); ?>
                 </div>
                 <?php endif; ?>
 
                 <!-- Login Form -->
-                <form id="loginForm" action="login.php" method="POST" class="space-y-6">
+                <form id="loginForm" action="<?php echo htmlspecialchars(BASE_PATH . '/login.php'); ?>" method="POST" class="space-y-6">
+                    <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars(generateCsrfToken()); ?>">
+                    
                     <!-- Username Field -->
                     <div>
                         <label for="username" class="block text-sm font-medium text-gray-700 mb-2">
@@ -99,8 +152,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             type="text" 
                             id="username" 
                             name="username" 
-                            value="<?php echo htmlspecialchars($username); ?>"
+                            value="<?php echo sanitize($username); ?>"
                             required
+                            autocomplete="username"
                             class="w-full px-4 py-4 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-800 focus:border-transparent transition-all duration-200 text-base bg-gray-50/50 hover:bg-white focus:bg-white"
                             placeholder="Insira o seu nome de utilizador"
                         >
@@ -116,6 +170,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             id="password" 
                             name="password" 
                             required
+                            autocomplete="current-password"
                             class="w-full px-4 py-4 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-800 focus:border-transparent transition-all duration-200 text-base bg-gray-50/50 hover:bg-white focus:bg-white"
                             placeholder="Insira a sua palavra-passe"
                         >
@@ -134,7 +189,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <div class="mt-6 text-center">
                     <p class="text-sm text-gray-600">
                         Não tem conta? 
-                        <a href="register.php" class="text-blue-800 hover:text-blue-700 font-medium transition-colors duration-200">
+                        <a href="<?php echo htmlspecialchars(BASE_PATH . '/register.php'); ?>" class="text-blue-800 hover:text-blue-700 font-medium transition-colors duration-200">
                             Registe-se
                         </a>
                     </p>
@@ -163,49 +218,48 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <!-- JavaScript -->
     <script>
         document.getElementById('loginForm').addEventListener('submit', function(e) {
-            // Get form values
+            e.preventDefault(); // Prevenir envio padrão
+
+            // Obter valores do formulário
             const username = document.getElementById('username').value.trim();
             const password = document.getElementById('password').value.trim();
-            
-            // Basic client-side validation
+            const submitButton = document.querySelector('button[type="submit"]');
+            const originalText = submitButton.textContent;
+
+            // Validação no cliente
             if (!username || !password) {
-                e.preventDefault();
                 alert('Por favor, preencha todos os campos obrigatórios.');
                 return;
             }
-            
             if (username.length < 3) {
-                e.preventDefault();
                 alert('O nome de utilizador deve ter pelo menos 3 caracteres.');
                 return;
             }
-            
             if (password.length < 6) {
-                e.preventDefault();
                 alert('A palavra-passe deve ter pelo menos 6 caracteres.');
                 return;
             }
-            
-            // Show loading state
-            const submitButton = document.querySelector('button[type="submit"]');
-            const originalText = submitButton.textContent;
+
+            // Mostrar estado de carregamento
             submitButton.textContent = 'A iniciar sessão...';
             submitButton.disabled = true;
-            
-            // Allow form submission to PHP
+
+            // Enviar formulário
+            this.submit();
+
+            // Restaurar botão após um tempo (caso haja erro no servidor)
             setTimeout(() => {
                 submitButton.textContent = originalText;
                 submitButton.disabled = false;
             }, 1500);
         });
 
-        // Add input focus effects
+        // Efeitos de foco nos inputs
         const inputs = document.querySelectorAll('input[type="text"], input[type="password"]');
         inputs.forEach(input => {
             input.addEventListener('focus', function() {
                 this.parentElement.classList.add('focused');
             });
-            
             input.addEventListener('blur', function() {
                 this.parentElement.classList.remove('focused');
             });
@@ -213,3 +267,4 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     </script>
 </body>
 </html>
+?>

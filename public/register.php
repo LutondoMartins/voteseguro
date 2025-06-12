@@ -1,18 +1,29 @@
 <?php
+// Definir constante para verificar inclusão
+// define('VOTESEGURO', true);
+
 require_once '../includes/config.php';
 require_once '../includes/db.php';
 require_once '../includes/functions.php';
+
+// Validar CSRF para requisições POST
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $csrf_token = sanitizeInput($_POST['csrf_token'] ?? '', 'string');
+    if (!validateCsrfToken($csrf_token)) {
+        header('HTTP/1.1 403 Forbidden');
+        exit('Token CSRF inválido.');
+    }
+}
 
 // Inicializa variáveis
 $error = '';
 $success = '';
 $username = '';
 
-// Processa o formulário de registro
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $username = trim($_POST['username'] ?? '');
-    $password = trim($_POST['password'] ?? '');
-    $confirmPassword = trim($_POST['confirmPassword'] ?? '');
+    $username = sanitizeInput($_POST['username'] ?? '', 'string');
+    $password = $_POST['password'] ?? ''; // Não sanitizar senha antes de hash
+    $confirmPassword = $_POST['confirmPassword'] ?? '';
     $terms = isset($_POST['terms']);
 
     // Validação no servidor
@@ -52,10 +63,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stmt->bind_param("ss", $username, $hashedPassword);
             if ($stmt->execute()) {
                 $success = 'Conta criada com sucesso! Redirecionando para o login...';
-                // Redireciona após 2 segundos
-                header('Refresh: 2; URL=login.php');
+                header('Refresh: 2; URL=' . SITE_URL . '/login.php');
             } else {
                 $error = 'Erro ao criar a conta. Tente novamente.';
+                if (ENVIRONMENT === 'production') {
+                    error_log("Erro ao criar usuário: " . $stmt->error);
+                }
             }
             $stmt->close();
         }
@@ -70,15 +83,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Registar Conta - VoteSeguro</title>
-    
-    <!-- Google Fonts - Inter -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap" rel="stylesheet">
-    
-    <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    
     <style>
         body {
             font-family: 'Inter', sans-serif;
@@ -86,41 +94,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     </style>
 </head>
 <body class="bg-gray-100 min-h-screen">
-    <!-- Main Content -->
     <main class="min-h-screen flex items-center justify-center px-4 py-8 sm:px-6 lg:px-8 bg-gradient-to-br from-blue-50 via-white to-green-50">
-        <div class="w-full max-w-md space-y-8">
-            <!-- Logo -->
-            <div class="text-center mb-8">
-                <div class="inline-flex items-center justify-center w-16 h-16 mb-6 bg-blue-800 rounded-2xl">
-                    <svg class="w-8 h-8 text-white" fill="currentColor" viewBox="0 0 20 20">
-                        <path fill-rule="evenodd" d="M6.267 3.455a3.066 3.066 0 001.745-.723 3.066 3.066 0 013.976 0 3.066 3.066 0 001.745.723 3.066 3.066 0 012.812 2.812c.051.643.304 1.254.723 1.745a3.066 3.066 0 010 3.976 3.066 3.066 0 00-.723 1.745 3.066 3.066 0 01-2.812 2.812 3.066 3.066 0 00-1.745.723 3.066 3.066 0 01-3.976 0 3.066 3.066 0 00-1.745-.723 3.066 3.066 0 01-2.812-2.812 3.066 3.066 0 00-.723-1.745 3.066 3.066 0 010-3.976 3.066 3.066 0 00.723-1.745 3.066 3.066 0 012.812-2.812zm7.44 5.252a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"></path>
-                    </svg>
+        <div class="w-full max-w-md">
+            <div class="text-center">
+                <div class="inline-flex items-center justify-center w-16 h-16 mb-6">
+                            <div class="w-16 h-16 bg-gradient-to-br from-blue-600 to-emerald-500 rounded-xl flex items-center justify-center shadow-lg group-hover:shadow-xl transition-all duration-300">
+                                <svg class="w-10 h-10 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                                </svg>
+                            </div>
                 </div>
                 <h1 class="text-3xl font-bold text-blue-800 mb-2">VoteSeguro</h1>
-                <p class="text-gray-600">Plataforma segura de votação digital</p>
+                <p class="text-sm text-gray-600">Plataforma segura de votação digital</p>
             </div>
 
-            <!-- Registration Card -->
             <div class="bg-white/80 backdrop-blur-sm rounded-2xl shadow-xl border border-white/20 p-8">
                 <div class="text-center mb-8">
                     <h2 class="text-2xl sm:text-xl font-bold text-gray-900 mb-2">Criar nova conta</h2>
                     <p class="text-sm text-gray-600">Junte-se à plataforma VoteSeguro</p>
                 </div>
 
-                <!-- Error or Success Message -->
                 <?php if (!empty($error)): ?>
-                <div class="mb-6 p-4 bg-red-100 border border-red-200 text-red-800 rounded-xl text-sm">
-                    <?php echo htmlspecialchars($error); ?>
-                </div>
+                    <div class="mb-6 p-4 bg-red-100 border border-red-200 text-red-800 rounded-xl text-sm">
+                        <?php echo sanitize($error); ?>
+                    </div>
                 <?php elseif (!empty($success)): ?>
-                <div class="mb-6 p-4 bg-green-100 border border-green-200 text-green-800 rounded-xl text-sm">
-                    <?php echo htmlspecialchars($success); ?>
-                </div>
+                    <div class="mb-6 p-4 bg-green-100 border border-green-200 text-green-800 rounded-xl text-sm">
+                        <?php echo sanitize($success); ?>
+                    </div>
                 <?php endif; ?>
 
-                <!-- Registration Form -->
-                <form id="registerForm" action="register.php" method="POST" class="space-y-6">
-                    <!-- Username Field -->
+                <form id="registerForm" action="<?php echo SITE_URL; ?>/register.php" method="POST" class="space-y-6">
+                    <input type="hidden" name="csrf_token" value="<?php echo generateCsrfToken(); ?>">
                     <div>
                         <label for="username" class="block text-sm font-medium text-gray-700 mb-2">
                             Nome de utilizador
@@ -129,14 +134,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             type="text" 
                             id="username" 
                             name="username" 
-                            value="<?php echo htmlspecialchars($username); ?>"
+                            value="<?php echo sanitize($username); ?>"
                             required
                             class="w-full px-4 py-4 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-800 focus:border-transparent transition-all duration-200 text-base bg-gray-50/50 hover:bg-white focus:bg-white"
                             placeholder="Escolha um nome de utilizador"
                         >
                     </div>
-
-                    <!-- Password Field -->
                     <div>
                         <label for="password" class="block text-sm font-medium text-gray-700 mb-2">
                             Palavra-passe
@@ -150,8 +153,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             placeholder="Crie uma palavra-passe segura"
                         >
                     </div>
-
-                    <!-- Confirm Password Field -->
                     <div>
                         <label for="confirmPassword" class="block text-sm font-medium text-gray-700 mb-2">
                             Confirmar Palavra-passe
@@ -165,8 +166,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             placeholder="Confirme a sua palavra-passe"
                         >
                     </div>
-
-                    <!-- Terms and Conditions -->
                     <div class="flex items-start">
                         <input 
                             type="checkbox" 
@@ -179,8 +178,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             Aceito os <a href="#" class="text-blue-800 hover:text-blue-700 font-medium">Termos e Condições</a> e a <a href="#" class="text-blue-800 hover:text-blue-700 font-medium">Política de Privacidade</a>
                         </label>
                     </div>
-
-                    <!-- Submit Button -->
                     <button 
                         type="submit"
                         class="w-full bg-gradient-to-r from-blue-800 to-blue-700 text-white py-4 px-4 rounded-xl font-medium hover:from-blue-700 hover:to-blue-600 focus:ring-2 focus:ring-blue-800 focus:ring-offset-2 transition-all duration-200 text-base shadow-lg hover:shadow-xl transform hover:-translate-y-0.5"
@@ -189,18 +186,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     </button>
                 </form>
 
-                <!-- Login Link -->
                 <div class="mt-6 text-center">
                     <p class="text-sm text-gray-600">
                         Já tem conta? 
-                        <a href="login.php" class="text-blue-800 hover:text-blue-700 font-medium transition-colors duration-200">
+                        <a href="<?php echo SITE_URL; ?>/login.php" class="text-blue-800 hover:text-blue-700 font-medium transition-colors duration-200">
                             Inicie sessão
                         </a>
                     </p>
                 </div>
             </div>
 
-            <!-- Security Notice -->
             <div class="bg-white/60 backdrop-blur-sm border border-green-100 rounded-xl p-4 text-center">
                 <p class="text-sm text-green-700 flex items-center justify-center">
                     <svg class="w-4 h-4 mr-2" fill="currentColor" viewBox="0 0 20 20">
@@ -212,16 +207,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         </div>
     </main>
 
-    <!-- JavaScript -->
     <script>
         document.getElementById('registerForm').addEventListener('submit', function(e) {
-            // Get form values
             const username = document.getElementById('username').value.trim();
             const password = document.getElementById('password').value.trim();
             const confirmPassword = document.getElementById('confirmPassword').value.trim();
             const termsAccepted = document.getElementById('terms').checked;
             
-            // Basic client-side validation
             if (!username || !password || !confirmPassword) {
                 e.preventDefault();
                 alert('Por favor, preencha todos os campos obrigatórios.');
@@ -264,20 +256,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 return;
             }
             
-            // Show loading state
             const submitButton = document.querySelector('button[type="submit"]');
             const originalText = submitButton.textContent;
             submitButton.textContent = 'A registar...';
             submitButton.disabled = true;
             
-            // Allow form submission to PHP
             setTimeout(() => {
                 submitButton.textContent = originalText;
                 submitButton.disabled = false;
             }, 2000);
         });
 
-        // Real-time password confirmation validation
         document.getElementById('confirmPassword').addEventListener('input', function() {
             const password = document.getElementById('password').value;
             const confirmPassword = this.value;
@@ -291,7 +280,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         });
 
-        // Add input focus effects
         const inputs = document.querySelectorAll('input, select');
         inputs.forEach(input => {
             input.addEventListener('focus', function() {

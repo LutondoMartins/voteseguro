@@ -5,7 +5,7 @@ require_once '../includes/functions.php';
 
 // Verifica se o usuário está logado
 if (!isLoggedIn()) {
-    header('Location: login.php');
+    header('Location: ' . BASE_PATH . '/login.php');
     exit;
 }
 
@@ -13,24 +13,48 @@ if (!isLoggedIn()) {
 $conn = getDBConnection();
 
 // Consulta eleições públicas
-$stmt = $conn->prepare("SELECT id, title, description FROM elections WHERE type = 'public'");
+$stmt = $conn->prepare("SELECT id, title, description, status FROM elections WHERE type = 'public'");
+if (!$stmt) {
+    error_log("Erro ao preparar consulta de eleições: " . $conn->error);
+    if (ENVIRONMENT === 'production') {
+        die('Erro interno do servidor.');
+    } else {
+        die('Erro ao consultar eleições.');
+    }
+}
 $stmt->execute();
 $result = $stmt->get_result();
 $elections = $result->fetch_all(MYSQLI_ASSOC);
+$stmt->close();
 
-// Função para calcular votos (exemplo, ajustar conforme necessário)
+// Função para calcular votos
 function getVoteCount($conn, $election_id) {
+    if (!is_numeric($election_id)) {
+        return 0;
+    }
     $stmt = $conn->prepare("SELECT COUNT(*) as vote_count FROM votes WHERE election_id = ?");
+    if (!$stmt) {
+        error_log("Erro ao preparar consulta de votos: " . $conn->error);
+        return 0;
+    }
     $stmt->bind_param("i", $election_id);
-    $stmt->execute();
+    if (!$stmt->execute()) {
+        error_log("Erro ao executar consulta de votos: " . $stmt->error);
+        $stmt->close();
+        return 0;
+    }
     $result = $stmt->get_result();
-    return $result->fetch_assoc()['vote_count'];
+    $count = $result->fetch_assoc()['vote_count'];
+    $stmt->close();
+    return $count;
 }
 
-// Função para calcular dias restantes (exemplo, ajustar se houver campo de data no banco)
-function getDaysRemaining($election_id) {
-    // Placeholder: substituir por lógica real baseada em data de encerramento
-    return rand(8, 30) . " dias restantes";
+// Função para determinar o estado da eleição
+function getDaysRemaining($status) {
+    if ($status === 'active') {
+        return "Ativa";
+    }
+    return "Encerrada";
 }
 ?>
 
@@ -39,18 +63,20 @@ function getDaysRemaining($election_id) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
     <title>VoteSeguro - Eleições Públicas</title>
     
     <!-- Google Fonts - Inter -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="../assets/css/index.css">
+    
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     
+    <link rel="stylesheet" href="../assets/css/index.css">
     <!-- Custom Tailwind Config -->
-    <script src="../assets/js/tailwind_cnfig.js"></script>
+    <script src="../assets/js/tailwind_config.js"></script>
 </head>
 <body class="font-inter bg-gradient-to-br from-slate-50 via-blue-50 to-emerald-50 min-h-screen relative overflow-x-hidden">
     
@@ -77,7 +103,7 @@ function getDaysRemaining($election_id) {
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
                                 </svg>
                             </div>
-                            <a href="index.php" class="text-2xl font-bold bg-gradient-to-r from-blue-600 to-emerald-600 bg-clip-text text-transparent">
+                            <a href="<?php echo htmlspecialchars(BASE_PATH . '/index.php'); ?>" class="text-2xl font-bold bg-gradient-to-r from-blue-600 to-emerald-600 bg-clip-text text-transparent">
                                 VoteSeguro
                             </a>
                         </div>
@@ -85,15 +111,18 @@ function getDaysRemaining($election_id) {
                     
                     <!-- Navigation -->
                     <nav class="hidden md:flex items-center space-x-1">
-                        <a href="my_elections.php" class="px-4 py-2 text-slate-700 hover:text-blue-600 font-medium rounded-lg hover:bg-white/50 transition-all duration-200">
+                        <a href="<?php echo htmlspecialchars(BASE_PATH . '/my_elections.php'); ?>" class="px-4 py-2 text-slate-700 hover:text-blue-600 font-medium rounded-lg hover:bg-white/50 transition-all duration-200">
                             Minhas Eleições
                         </a>
-                        <a href="<?php echo ($_SESSION['role'] === 'admin') ? 'create_election.php' : 'create_private_election.php'; ?>" class="px-4 py-2 text-slate-700 hover:text-blue-600 font-medium rounded-lg hover:bg-white/50 transition-all duration-200">
+                        <a href="<?php echo htmlspecialchars(BASE_PATH . '/' . ($_SESSION['role'] === 'admin' ? 'create_election.php' : 'create_private_election.php')); ?>" class="px-4 py-2 text-slate-700 hover:text-blue-600 font-medium rounded-lg hover:bg-white/50 transition-all duration-200">
                             Criar Eleição
                         </a>
-                        <button onclick="logout()" class="ml-4 px-6 py-2 bg-gradient-to-r from-red-500 to-red-600 text-white rounded-full hover:from-red-600 hover:to-red-700 transition-all duration-300 font-medium shadow-lg hover:shadow-xl transform hover:-translate-y-0.5">
-                            Sair
-                        </button>
+                        <form action="<?php echo htmlspecialchars(BASE_PATH . '/logout.php'); ?>" method="POST" class="inline">
+                            <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars(generateCsrfToken()); ?>">
+                            <button type="submit" class="ml-4 px-6 py-2 bg-gradient-to-r from-red-500 to-red-600 text-white rounded-full hover:from-red-600 hover:to-red-700 transition-all duration-300 font-medium shadow-lg hover:shadow-xl transform hover:-translate-y-0.5">
+                                Sair
+                            </button>
+                        </form>
                     </nav>
                     
                     <!-- Mobile menu button -->
@@ -110,15 +139,18 @@ function getDaysRemaining($election_id) {
             <!-- Mobile navigation -->
             <div id="mobile-menu" class="hidden md:hidden border-t border-white/20">
                 <div class="px-4 pt-2 pb-3 space-y-1 bg-white/10">
-                    <a href="my_elections.php" class="block px-3 py-2 text-slate-700 hover:text-blue-600 font-medium rounded-lg hover:bg-white/30 transition-all duration-200">
+                    <a href="<?php echo htmlspecialchars(BASE_PATH . '/my_elections.php'); ?>" class="block px-3 py-2 text-slate-700 hover:text-blue-600 font-medium rounded-lg hover:bg-white/30 transition-all duration-200">
                         Minhas Eleições
                     </a>
-                    <a href="<?php echo ($_SESSION['role'] === 'admin') ? 'create_election.php' : 'create_private_election.php'; ?>" class="block px-3 py-2 text-slate-700 hover:text-blue-600 font-medium rounded-lg hover:bg-white/30 transition-all duration-200">
+                    <a href="<?php echo htmlspecialchars(BASE_PATH . '/' . ($_SESSION['role'] === 'admin' ? 'create_election.php' : 'create_private_election.php')); ?>" class="block px-3 py-2 text-slate-700 hover:text-blue-600 font-medium rounded-lg hover:bg-white/30 transition-all duration-200">
                         Criar Eleição
                     </a>
-                    <button onclick="logout()" class="w-full mt-2 px-3 py-2 bg-gradient-to-r from-red-500 to-red-600 text-white rounded-lg hover:from-red-600 hover:to-red-700 transition-all duration-300 font-medium text-left">
-                        Sair
-                    </button>
+                    <form action="<?php echo htmlspecialchars(BASE_PATH . '/logout.php'); ?>" method="POST" class="inline">
+                        <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars(generateCsrfToken()); ?>">
+                        <button type="submit" class="w-full mt-2 px-3 py-2 bg-gradient-to-r from-red-500 to-red-600 text-white rounded-lg hover:from-red-600 hover:to-red-700 transition-all duration-300 font-medium text-left">
+                            Sair
+                        </button>
+                    </form>
                 </div>
             </div>
         </div>
@@ -136,10 +168,10 @@ function getDaysRemaining($election_id) {
                 </div>
                 
                 <h1 class="text-5xl md:text-7xl font-bold mb-6 hero-text leading-tight">
-                    Eleições
+                    Eleições                         Públicas
                     <br>
                     <span class="relative">
-                        Públicas
+
                         <div class="absolute -bottom-4 left-0 right-0 h-1 bg-gradient-to-r from-blue-600 to-emerald-600 rounded-full transform scale-x-0 animate-[scale-x-100_1s_ease-out_1s_forwards]"></div>
                     </span>
                 </h1>
@@ -191,16 +223,16 @@ function getDaysRemaining($election_id) {
                             </svg>
                         </div>
                         <div class="status-badge text-xs font-semibold text-white px-3 py-1 rounded-full">
-                            <?php echo htmlspecialchars(getDaysRemaining($election['id'])); ?>
+                            <?php echo sanitize(getDaysRemaining($election['status'])); ?>
                         </div>
                     </div>
                     
                     <h3 class="text-2xl font-bold text-slate-800 mb-4 group-hover:text-blue-600 transition-colors">
-                        <?php echo htmlspecialchars($election['title']); ?>
+                        <?php echo sanitize($election['title']); ?>
                     </h3>
                     
                     <p class="text-slate-600 mb-6 leading-relaxed">
-                        <?php echo htmlspecialchars($election['description']); ?>
+                        <?php echo sanitize($election['description']); ?>
                     </p>
                     
                     <div class="flex items-center justify-between">
@@ -209,10 +241,10 @@ function getDaysRemaining($election_id) {
                                 <svg class="w-4 h-4 mr-1" fill="currentColor" viewBox="0 0 20 20">
                                     <path d="M13 6a3 3 0 11-6 0 3 3 0 016 0zM18 8a2 2 0 11-4 0 2 2 0 014 0zM14 15a4 4 0 00-8 0v3h8v-3z"></path>
                                 </svg>
-                                <span><?php echo getVoteCount($conn, $election['id']); ?> votos</span>
+                                <span><?php echo sanitize(getVoteCount($conn, $election['id'])); ?> votos</span>
                             </div>
                         </div>
-                        <a href="election.php?id=<?php echo $election['id']; ?>" class="btn-primary text-white px-6 py-3 rounded-xl font-medium inline-flex items-center space-x-2">
+                        <a href="<?php echo htmlspecialchars(BASE_PATH . '/election.php?id=' . sanitizeInput($election['id'], 'int')); ?>" class="btn-primary text-white px-6 py-3 rounded-xl font-medium inline-flex items-center space-x-2">
                             <span>Participar</span>
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6"></path>
@@ -228,11 +260,11 @@ function getDaysRemaining($election_id) {
     <!-- Footer -->
     <footer class="relative">
         <div class="glassmorphism-dark border-t border-white/10">
-            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
                 <!-- Bottom -->
                 <div class="border-t border-white/10 pt-8 text-center">
-                    <p class="text-slate-600">
-                        © 2025 VoteSeguro. Todos os direitos reservados.
+                    <p class="text-sm text-slate-600">
+                        © 2024 VoteSeguro. Todos os direitos reservados.
                     </p>
                 </div>
             </div>
@@ -241,23 +273,12 @@ function getDaysRemaining($election_id) {
 
     <!-- JavaScript -->
     <script>
-        // Logout function
-        function logout() {
-            // Add loading animation
-            event.target.innerHTML = '<svg class="animate-spin -ml-1 mr-2 h-4 w-4 text-white inline" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> A sair...';
-            
-            setTimeout(() => {
-                // Redirect to logout.php
-                window.location.href = 'logout.php';
-            }, 1000);
-        }
-
         // Toggle mobile menu
         function toggleMobileMenu() {
             const mobileMenu = document.getElementById('mobile-menu');
             mobileMenu.classList.toggle('hidden');
         }
-
+        
         // Close mobile menu when clicking outside
         document.addEventListener('click', function(event) {
             const mobileMenu = document.getElementById('mobile-menu');
@@ -283,13 +304,12 @@ function getDaysRemaining($election_id) {
             });
         }, observerOptions);
 
-        // Observe all cards
         document.addEventListener('DOMContentLoaded', () => {
             const cards = document.querySelectorAll('.voting-card');
             cards.forEach(card => {
                 card.style.opacity = '0';
                 card.style.transform = 'translateY(30px)';
-                card.style.transition = 'all 0.6s ease-out';
+                card.style.transition = 'all 0.5s ease-out';
                 observer.observe(card);
             });
         });
@@ -301,7 +321,7 @@ function getDaysRemaining($election_id) {
             
             shapes.forEach((shape, index) => {
                 const speed = 0.5 + (index * 0.1);
-                shape.style.transform = `translateY(${scrolled * speed}px)`;
+                shape.style.transform = `translateY(${scrolled * speed})px)`;
             });
         });
 
@@ -322,16 +342,15 @@ function getDaysRemaining($election_id) {
         // Add click animation to buttons
         document.querySelectorAll('.btn-primary').forEach(button => {
             button.addEventListener('click', function(e) {
-                // Create ripple effect
                 const ripple = document.createElement('span');
                 const rect = this.getBoundingClientRect();
                 const size = Math.max(rect.width, rect.height);
                 const x = e.clientX - rect.left - size / 2;
                 const y = e.clientY - rect.top - size / 2;
                 
-                ripple.style.width = ripple.style.height = size + 'px';
-                ripple.style.left = x + 'px';
-                ripple.style.top = y + 'px';
+                ripple.style.width = ripple.style.height = `${size}px`;
+                ripple.style.left = `${x}px`;
+                ripple.style.top = `${y}px`;
                 ripple.classList.add('ripple');
                 
                 this.appendChild(ripple);
@@ -344,3 +363,7 @@ function getDaysRemaining($election_id) {
     </script>
 </body>
 </html>
+<?php
+// Close connection
+$conn->close();
+?>
